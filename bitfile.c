@@ -21,7 +21,7 @@ int BitFile_Read(FILE* hFile, struct BitFile_Sections** pSections) {
 		}
 
 		uchar iLengthBytes = cSectionID == 'e' ? 4 : 2;
-		char dData[4];
+		uchar dData[4];
 		if(fread(dData, 1, iLengthBytes, hFile) != iLengthBytes) goto error_nofree;
 
 		if(iLengthBytes == 4) iSectionSize = dData[0] << 24 | dData[1] << 16 | dData[2] << 8 | dData[3];
