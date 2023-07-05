@@ -1,7 +1,6 @@
 #include "platform.h"
 #include "bitfile.h"
 #include "driver.h"
-#include "fx2.h"
 #include "dlc9lp.h"
 
 static void _Reset(void) {
@@ -17,14 +16,22 @@ int main(int argc, char** argv) {
 	if(libusb_init(NULL)) crash();
 
 	if(argc == 2 && !strcmp(argv[1], "identify")) {
-		if(XPC_Initialize(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_FW)) crash("Platform cable initialization failure");
-		JTAG_TestLogicReset();
-		JTAG_Enqueue(0, 0, 0);
-		JTAG_Commit(NULL);
-		uint8_t dTDOBuffer[4];
-		JTAG_ReadDataRegister(dTDOBuffer, sizeof(dTDOBuffer) * 8);
-		JTAG_Commit(NULL);
-		printf("%02X %02X %02X %02X\n", dTDOBuffer[3], dTDOBuffer[2], dTDOBuffer[1], dTDOBuffer[0]);
+		if(XPC_Initialize(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_FW)) {
+			if(XPC_InitializeFTDI(0x0403, 0x6014)) {
+				crash("Platform cable initialization failure");
+			}
+		}
+
+		if(g_bFTDI) printf("The cable and the FPGA both seem to be connected properly.\n");
+		else {
+			JTAG_TestLogicReset();
+			JTAG_Enqueue(0, 0, 0);
+			JTAG_Commit(NULL);
+			uint8_t dTDOBuffer[4];
+			JTAG_ReadDataRegister(dTDOBuffer, sizeof(dTDOBuffer) * 8);
+			JTAG_Commit(NULL);
+			printf("%02X %02X %02X %02X\n", dTDOBuffer[3], dTDOBuffer[2], dTDOBuffer[1], dTDOBuffer[0]);
+		}
 
 	} else if(argc == 2 && !strcmp(argv[1], "reset")) {
 		if(XPC_Initialize(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_FW)) crash("Platform cable initialization failure");
@@ -79,9 +86,9 @@ int main(int argc, char** argv) {
 	} else if(argc == 2 && !strcmp(argv[1], "init")) {
 		struct libusb_device_handle* hDevice = XPC_Connect(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_BOOT);
 		if(!hDevice) crash("Platform cable not found or already initialized");
-		_CypressFX2WriteRAM(hDevice, CYPRESS_FX2_CPUCS_ADDRESS, (uint8_t[]){ CYPRESS_FX2_CPUCS_HALT }, 1);
+		XPC_CypressFX2WriteRAM(hDevice, CYPRESS_FX2_CPUCS_ADDRESS, (uint8_t[]){ CYPRESS_FX2_CPUCS_HALT }, 1);
 		XPC_DLC9LP_UploadFirmware(hDevice);
-		_CypressFX2WriteRAM(hDevice, CYPRESS_FX2_CPUCS_ADDRESS, (uint8_t[]){ CYPRESS_FX2_CPUCS_RESET }, 1);
+		XPC_CypressFX2WriteRAM(hDevice, CYPRESS_FX2_CPUCS_ADDRESS, (uint8_t[]){ CYPRESS_FX2_CPUCS_RESET }, 1);
 
 	} else {
 		fprintf(stderr, "Usage: %s identify\n", argv[0]);

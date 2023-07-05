@@ -23,8 +23,11 @@
 #define XPC_00A6_CHUNKSIZE (XPC_00A6_MAX_BITS / 4) // 16-bit words; each encodes 4 bits
 #define XPC_TDO_BUFSIZE 1024 // max pending TDO bytes waiting to be read
 
+extern uint8_t g_bFTDI;
+
 struct libusb_device_handle* XPC_Connect(uint16_t iVendor, uint16_t iProduct);
 int XPC_Initialize(uint16_t iVendor, uint16_t iProduct);
+int XPC_InitializeFTDI(uint16_t iVendor, uint16_t iProduct);
 void XPC_Disconnect(void);
 
 void JTAG_Initialize(void);

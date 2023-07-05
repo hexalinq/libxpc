@@ -1,8 +1,11 @@
 #include "platform.h"
 #include "driver.h"
 #include "dlc9lp.h"
+#include <ftdi.h>
 
 struct libusb_device_handle* g_hDevice = NULL;
+struct ftdi_context g_tFTDI;
+uint8_t g_bFTDI = FALSE;
 uint8_t g_dJTAGFrames[XPC_00A6_CHUNKSIZE * 2];
 //uint16_t g_dJTAGFrames[XPC_00A6_CHUNKSIZE];
 size_t g_iFrameBits = 0;
@@ -111,6 +114,43 @@ int XPC_Initialize(uint16_t iVendor, uint16_t iProduct) {
 	XPC_Enable(g_hDevice);
 	XPC_JTAGTransfer(g_hDevice, (uint8_t[]){ 0, 0 }, 2, NULL, 0);
 	XPC_SetClock(g_hDevice, 0x10);
+	JTAG_Initialize();
+	return 0;
+}
+
+int XPC_InitializeFTDI(uint16_t iVendor, uint16_t iProduct) {
+	g_bFTDI = TRUE;
+	if(ftdi_init(&g_tFTDI)) crash();
+	if(ftdi_usb_open_desc(&g_tFTDI, iVendor, iProduct, 0, 0)) {
+		ftdi_deinit(&g_tFTDI);
+		return 1;
+	}
+
+	ftdi_usb_reset(&g_tFTDI);
+	ftdi_set_interface(&g_tFTDI, INTERFACE_A);
+	ftdi_set_latency_timer(&g_tFTDI, 1);
+	ftdi_set_bitmode(&g_tFTDI, 0xfb, BITMODE_MPSSE);
+
+	if(ftdi_write_data(&g_tFTDI, (uint8_t[]){ SET_BITS_LOW, 0x08, 0x0B, SET_BITS_HIGH, 0x00, 0x00, TCK_DIVISOR, 0x00, 0x00, LOOPBACK_END }, 10) != 10) {
+		fprintf(stderr, "Config error\n");
+		ftdi_deinit(&g_tFTDI);
+		return 1;
+	}
+
+	if(ftdi_write_data(&g_tFTDI, (uint8_t[]){ GET_BITS_LOW, SEND_IMMEDIATE }, 2) != 2) {
+		fprintf(stderr, "Write error\n");
+		ftdi_deinit(&g_tFTDI);
+		return 1;
+	}
+
+	uint8_t xStatus;
+	ftdi_read_data(&g_tFTDI, &xStatus, 1);
+	if((xStatus & 0x10) == 0x00) {
+		fprintf(stderr, "The cable doesn't seem to be connected to an FPGA\n");
+		ftdi_deinit(&g_tFTDI);
+		return 1;
+	}
+
 	JTAG_Initialize();
 	return 0;
 }
