@@ -190,6 +190,12 @@ size_t JTAG_OutputSize(void) {
 void JTAG_Flush(uchar* pTDO) {
 	if(!g_iFrameBits) return;
 	if(g_iTDOBits && !pTDO) crash();
+
+	if(g_bFTDI) {
+		if(pTDO) crash();
+		return;
+	}
+
 	g_pTDOBuffer = pTDO;
 	if((g_iFrameBits & 3) == 0) _Enqueue(0, 0, TRUE, FALSE);
 
@@ -217,7 +223,16 @@ void JTAG_Commit(uchar* pTDO) {
 }
 
 void JTAG_Enqueue(uint8_t bTMS, uint8_t bTDI, uint8_t bReadTDO) {
-	_Enqueue(bTDI & 1, bTMS & 1, FALSE, bReadTDO);
+	if(!g_bFTDI) _Enqueue(bTDI & 1, bTMS & 1, FALSE, bReadTDO);
+	else {
+		if(bReadTDO) crash("Not implemented");
+		if(bReadTDO) ++g_iTDOBits;
+		if(ftdi_write_data(&g_tFTDI, (uint8_t[]){
+			MPSSE_WRITE_TMS | MPSSE_LSB | MPSSE_BITMODE | MPSSE_WRITE_NEG,
+			0,
+			(bTMS ? 1 : 0) | ((bTDI & 0x01) << 7),
+		}, 3) != 3) crash();
+	}
 }
 
 void JTAG_BulkTransfer(const uchar* pTDI, const uchar* pTMS, uchar* pTDO, size_t iBits) {
@@ -251,12 +266,18 @@ uint8_t JTAG_TransferByte(uint8_t xTMS, uint8_t xTDI) {
 }
 
 void JTAG_WriteInstructionRegisterBits(uint8_t iValue) {
-	JTAG_Enqueue(0, (iValue >> 0), FALSE);
-	JTAG_Enqueue(0, (iValue >> 1), FALSE);
-	JTAG_Enqueue(0, (iValue >> 2), FALSE);
-	JTAG_Enqueue(0, (iValue >> 3), FALSE);
-	JTAG_Enqueue(0, (iValue >> 4), FALSE);
-	JTAG_Enqueue(1, (iValue >> 5), FALSE);
+	if(g_bFTDI) {
+		if(ftdi_write_data(&g_tFTDI, (uint8_t[]){ MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE | MPSSE_WRITE_NEG, 4, iValue }, 3)) crash();
+		JTAG_Enqueue(1, (iValue >> 5), FALSE);
+
+	} else {
+		JTAG_Enqueue(0, (iValue >> 0), FALSE);
+		JTAG_Enqueue(0, (iValue >> 1), FALSE);
+		JTAG_Enqueue(0, (iValue >> 2), FALSE);
+		JTAG_Enqueue(0, (iValue >> 3), FALSE);
+		JTAG_Enqueue(0, (iValue >> 4), FALSE);
+		JTAG_Enqueue(1, (iValue >> 5), FALSE);
+	}
 }
 
 void JTAG_WriteInstructionRegister(uint8_t iValue) {
@@ -269,32 +290,79 @@ void JTAG_WriteInstructionRegister(uint8_t iValue) {
 	JTAG_Enqueue(0, 0, 0);
 }
 
+void JTAG_ReadWriteDataRegisterBitsFTDI(uint8_t* dTDO, uint8_t* dTDI, uint8_t iBits) {
+	if(!iBits || iBits > 8) crash();
+
+	if(ftdi_write_data(&g_tFTDI, (uint8_t[]){
+		MPSSE_LSB | MPSSE_BITMODE | MPSSE_WRITE_NEG | (dTDI ? MPSSE_DO_WRITE : 0) | (dTDO ? MPSSE_DO_READ : 0),
+		iBits - 1,
+		dTDI ? *dTDI : 0,
+	}, 3) != 3) crash();
+
+	if(dTDO && ftdi_read_data(&g_tFTDI, dTDO, 1) != 1) crash();
+}
+
+#define FTDI_CHUNKSIZE 65532
+void JTAG_ReadWriteDataRegisterFTDI(uint8_t* dTDO, uint8_t* dTDI, uint32_t iBits) {
+	uint8_t dBuffer[3 + FTDI_CHUNKSIZE];
+	dBuffer[0] = MPSSE_LSB | MPSSE_WRITE_NEG;
+	if(dTDI && dTDO) crash();
+	if(dTDI) dBuffer[0] |= MPSSE_DO_WRITE;
+	else if(dTDO) dBuffer[0] |= MPSSE_DO_READ;
+	else crash();
+
+	size_t iBytes = iBits / 8;
+	size_t iRemainingBits = iBits % 8;
+
+	for(size_t iByte = 0; iByte < iBytes;) {
+		size_t iSize = MIN(FTDI_CHUNKSIZE, iBytes - iByte);
+
+		dBuffer[1] = (iSize - 1) & 0xFF;
+		dBuffer[2] = ((iSize - 1) >> 8) & 0xFF;
+
+		if(dTDI) memcpy(dBuffer + 3, (dTDI + iByte), iSize);
+		if(ftdi_write_data(&g_tFTDI, dBuffer, iSize + 3) != (ssize_t)iSize + 3) crash();
+		if(dTDO) ftdi_read_data(&g_tFTDI, (dTDO + iByte), iSize);
+
+		iByte += iSize;
+	}
+
+	if(!iRemainingBits) JTAG_Enqueue(1, 0, FALSE);
+	else {
+		JTAG_ReadWriteDataRegisterBitsFTDI(dTDO, dTDI ? dTDI + iBytes : NULL, iRemainingBits - 1);
+		JTAG_Enqueue(1, (dTDI[iBytes] >> (iRemainingBits - 1)), FALSE);
+	}
+}
+
 void JTAG_WriteDataRegister(uint8_t* dBits, size_t iBits) {
 	JTAG_Enqueue(1, 0, 0);
 	JTAG_Enqueue(0, 0, 0);
 	JTAG_Enqueue(0, 0, 0);
 	JTAG_Commit(NULL);
 
-	size_t iBytes = iBits / 8;
-	size_t iRemainingBits = iBits % 8;
-	if(!iRemainingBits) {
-		--iBytes;
-		iRemainingBits += 8;
-	}
+	if(g_bFTDI) JTAG_ReadWriteDataRegisterFTDI(NULL, dBits, iBits);
+	else {
+		size_t iBytes = iBits / 8;
+		size_t iRemainingBits = iBits % 8;
+		if(!iRemainingBits) {
+			--iBytes;
+			iRemainingBits += 8;
+		}
 
-	for(size_t iByte = 0; iByte < iBytes;) {
-		size_t iSize = MIN(XPC_00A6_CHUNKSIZE * 2 - 1, iBytes - iByte);
-		printf("Writing %lu / %lu\n", iByte, iBytes);
+		for(size_t iByte = 0; iByte < iBytes;) {
+			size_t iSize = MIN(XPC_00A6_CHUNKSIZE * 2 - 1, iBytes - iByte);
+			printf("Writing %lu / %lu\n", iByte, iBytes);
 
-		uchar dZero[iSize];
-		memset(dZero, 0, iSize);
-		JTAG_BulkTransfer(dBits ? dBits + iByte : dZero, dZero, NULL, iSize * 8);
-		iByte += iSize;
-	}
+			uchar dZero[iSize];
+			memset(dZero, 0, iSize);
+			JTAG_BulkTransfer(dBits ? dBits + iByte : dZero, dZero, NULL, iSize * 8);
+			iByte += iSize;
+		}
 
-	FOR_RANGE(iBit, iRemainingBits) {
-		if(iBit == iRemainingBits - 1) JTAG_Enqueue(1, dBits[iBytes] >> iBit, FALSE);
-		else JTAG_Enqueue(0, dBits[iBytes] >> iBit, FALSE);
+		FOR_RANGE(iBit, iRemainingBits) {
+			if(iBit == iRemainingBits - 1) JTAG_Enqueue(1, dBits[iBytes] >> iBit, FALSE);
+			else JTAG_Enqueue(0, dBits[iBytes] >> iBit, FALSE);
+		}
 	}
 
 	JTAG_Enqueue(1, 0, 0);
@@ -307,12 +375,15 @@ void JTAG_ReadDataRegister(uint8_t* dBits, size_t iBits) {
 	JTAG_Enqueue(0, 0, 0);
 	JTAG_Commit(NULL);
 
-	FOR_RANGE(iBit, iBits) {
-		if(iBit == iBits - 1) JTAG_Enqueue(1, 0, TRUE);
-		else JTAG_Enqueue(0, 0, TRUE);
-	}
+	if(g_bFTDI) JTAG_ReadWriteDataRegisterFTDI(dBits, NULL, iBits);
+	else {
+		FOR_RANGE(iBit, iBits) {
+			if(iBit == iBits - 1) JTAG_Enqueue(1, 0, TRUE);
+			else JTAG_Enqueue(0, 0, TRUE);
+		}
 
-	JTAG_Commit(dBits);
+		JTAG_Commit(dBits);
+	}
 
 	JTAG_Enqueue(1, 0, 0);
 	JTAG_Enqueue(0, 0, 0);

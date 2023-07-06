@@ -39,6 +39,16 @@ void JTAG_Enqueue(uint8_t bTMS, uint8_t bTDI, uint8_t bReadTDO);
 void JTAG_WriteInstructionRegister(uint8_t iValue);
 void JTAG_WriteInstructionRegisterBits(uint8_t iValue);
 uint8_t JTAG_Transfer(uint8_t bTMS, uint8_t bTDI);
-static inline void JTAG_TestLogicReset(void) { FOR_RANGE(iBit, 5) JTAG_Enqueue(1, 0, 0); }
 void JTAG_WriteDataRegister(uint8_t* dBits, size_t iBits);
 void JTAG_ReadDataRegister(uint8_t* dBits, size_t iBits);
+
+// https://support.xilinx.com/s/article/3203?language=en_US
+
+static inline void JTAG_TestLogicReset(void) {
+	FOR_RANGE(iBit, 5) JTAG_Enqueue(1, 0, 0);
+}
+
+static inline void JTAG_RunTestIdle(void) {
+	JTAG_TestLogicReset();
+	JTAG_Enqueue(0, 0, 0);
+}

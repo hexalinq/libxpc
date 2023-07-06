@@ -4,11 +4,17 @@
 #include "dlc9lp.h"
 
 static void _Reset(void) {
-	JTAG_TestLogicReset();
-	JTAG_Enqueue(0, 0, 0);
+	JTAG_RunTestIdle();
 	JTAG_WriteInstructionRegister(FPGA_INSTRUCTION_JPROGRAM);
-	JTAG_TestLogicReset();
-	JTAG_Enqueue(0, 0, 0);
+	JTAG_RunTestIdle();
+}
+
+static void _Init(void) {
+	if(XPC_Initialize(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_FW)) {
+		if(XPC_InitializeFTDI(0x0403, 0x6014)) {
+			crash("Platform cable initialization failure");
+		}
+	}
 }
 
 int main(int argc, char** argv) {
@@ -16,30 +22,24 @@ int main(int argc, char** argv) {
 	if(libusb_init(NULL)) crash();
 
 	if(argc == 2 && !strcmp(argv[1], "identify")) {
-		if(XPC_Initialize(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_FW)) {
-			if(XPC_InitializeFTDI(0x0403, 0x6014)) {
-				crash("Platform cable initialization failure");
-			}
-		}
+		_Init();
+		printf("The cable and the FPGA both seem to be connected properly.\n");
+		printf("Reading FPGA serial number...\n");
+		JTAG_RunTestIdle();
+		JTAG_Commit(NULL);
+		uint8_t dTDOBuffer[4];
+		JTAG_ReadDataRegister(dTDOBuffer, sizeof(dTDOBuffer) * 8);
+		JTAG_Commit(NULL);
 
-		if(g_bFTDI) printf("The cable and the FPGA both seem to be connected properly.\n");
-		else {
-			JTAG_TestLogicReset();
-			JTAG_Enqueue(0, 0, 0);
-			JTAG_Commit(NULL);
-			uint8_t dTDOBuffer[4];
-			JTAG_ReadDataRegister(dTDOBuffer, sizeof(dTDOBuffer) * 8);
-			JTAG_Commit(NULL);
-			printf("%02X %02X %02X %02X\n", dTDOBuffer[3], dTDOBuffer[2], dTDOBuffer[1], dTDOBuffer[0]);
-		}
+		printf("%02X %02X %02X %02X\n", dTDOBuffer[3], dTDOBuffer[2], dTDOBuffer[1], dTDOBuffer[0]);
 
 	} else if(argc == 2 && !strcmp(argv[1], "reset")) {
-		if(XPC_Initialize(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_FW)) crash("Platform cable initialization failure");
+		_Init();
 		_Reset();
 		JTAG_Commit(NULL);
 
 	} else if(argc == 3 && !strcmp(argv[1], "load")) {
-		if(XPC_Initialize(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_FW)) crash("Platform cable initialization failure");
+		_Init();
 
 		FILE* hFile;
 		if(!strcmp(argv[2], "-")) hFile = stdin;
@@ -76,8 +76,7 @@ int main(int argc, char** argv) {
 		JTAG_WriteInstructionRegister(FPGA_INSTRUCTION_JSTART);
 		FOR_RANGE(i, 16) JTAG_Enqueue(0, 0, 0);
 
-		JTAG_TestLogicReset();
-		JTAG_Enqueue(0, 0, 0);
+		JTAG_RunTestIdle();
 		JTAG_Commit(NULL);
 
 		BitFile_Free(pSections);
