@@ -267,7 +267,7 @@ uint8_t JTAG_TransferByte(uint8_t xTMS, uint8_t xTDI) {
 
 void JTAG_WriteInstructionRegisterBits(uint8_t iValue) {
 	if(g_bFTDI) {
-		if(ftdi_write_data(&g_tFTDI, (uint8_t[]){ MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE | MPSSE_WRITE_NEG, 4, iValue }, 3)) crash();
+		if(ftdi_write_data(&g_tFTDI, (uint8_t[]){ MPSSE_DO_WRITE | MPSSE_LSB | MPSSE_BITMODE | MPSSE_WRITE_NEG, 4, iValue }, 3) != 3) crash();
 		JTAG_Enqueue(1, (iValue >> 5), FALSE);
 
 	} else {
