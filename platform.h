@@ -12,7 +12,7 @@
 typedef unsigned char uchar;
 
 #define crash(format, ...) do { \
-	fprintf(stderr, "%s:%u:%s | %s (%s) | " format "\n", __FILE__, __LINE__, __FUNCTION__, strerrorname_np(errno), strerrordesc_np(errno), ##__VA_ARGS__); \
+	fprintf(stderr, "%s:%u:%s | errno: %d | " format "\n", __FILE__, __LINE__, __FUNCTION__, errno, ##__VA_ARGS__); \
 	_Exit(1); \
 } while(0);
 
