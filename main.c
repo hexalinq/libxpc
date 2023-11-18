@@ -12,7 +12,9 @@ static void _Reset(void) {
 static void _Init(void) {
 	if(XPC_Initialize(XPC_DLC9LP_VENDOR, XPC_DLC9LP_PRODUCT_FW)) {
 		if(XPC_InitializeFTDI(0x0403, 0x6014)) {
-			crash("Platform cable initialization failure");
+			if(XPC_InitializeFTDI(0x0403, 0x6010)) {
+				crash("Platform cable initialization failure");
+			}
 		}
 	}
 }
